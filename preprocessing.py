@@ -29,13 +29,15 @@ def imputer_KNN(data: pd.DataFrame, in_section_neighbors=5, cross_section_neighb
         ignored_columns = ['code', 'date']
         
         if not nan_columns.empty:
-            ignored_columns = ignored_columns + nan_columns
+            ignored_columns = ignored_columns + list(nan_columns)
             all_nan_date += 1
             print('all NaN columns detected')
             print(date)
             print(nan_columns)
+            #print(ignored_columns)
             
-        cols_to_fill = [col for col in group.columns if col not in ignored_columns]  # 获取截面上需要标准化的列
+        cols_to_fill = [col for col in group.columns if col not in ignored_columns]  # 获取截面上需要填充的列
+        #print(cols_to_fill)
         data_filled.loc[group.index, cols_to_fill] = in_section_imputer.fit_transform(group[cols_to_fill])
         
     # 使用整个填补完其他列的数据集进行 KNN 填补那些当天全是 NaN 的列
@@ -112,6 +114,37 @@ def winsorize_X(data: pd.DataFrame, lower_bound=None, upper_bound=None):
         return data_winsorized
 
 
+def winsorize_MAD(data: pd.DataFrame, lower_bound=None, upper_bound=None):
+    data_winsorized = data.copy()
+    lower = {}
+    upper = {}
+    if lower_bound is None and upper_bound is None:
+        n = 3
+        for col in data_winsorized.columns:
+            if col not in ['code', 'date', 'f_6']:
+                # 计算分位数时忽略 NaN 值
+                median = data_winsorized[col].quantile(0.5)
+                mad = ((data_winsorized[col] - median).abs()).quantile(0.5)
+                max_range = median + n * mad
+                min_range = median - n * mad
+       
+                # 使用 clip 函数对列进行缩尾处理
+                data_winsorized[col] = np.clip(data_winsorized[col], min_range, max_range)
+
+                #存储训练集的上下3倍MAD
+                lower[col] = min_range
+                upper[col] = max_range
+
+        return data_winsorized, lower, upper
+    else:
+        for col in data_winsorized.columns:
+            if col not in ['code', 'date', 'f_6']:
+                # 使用 clip 函数对列进行缩尾处理，使用训练集的上下3倍MAD
+                data_winsorized[col] = np.clip(data_winsorized[col], lower_bound[col], upper_bound[col])
+
+        return data_winsorized
+
+    
 def zscore_standardization(data: pd.DataFrame):
     data_standardized = data.copy()
     scaler = StandardScaler()
@@ -122,6 +155,34 @@ def zscore_standardization(data: pd.DataFrame):
         data_standardized.loc[group.index, cols_to_standardize] = scaler.fit_transform(group[cols_to_standardize])
     
     return data_standardized
+
+
+def robust_zscore(data: pd.DataFrame, MEDIANS=None, MADS=None):#在整个数据集上用robust zscore标准化
+    data_standardized = data.copy()
+    med_dict = {}
+    mad_dict = {}
+    if MEDIANS is None and MADS is None:
+        for col in data_standardized.columns:
+            if col not in ['code', 'date']:
+                # 计算分位数时忽略 NaN 值
+                median = data_standardized[col].quantile(0.5)
+                mad = ((data_standardized[col] - median).abs()).quantile(0.5)
+       
+                # 按列使用R.Z.score转换
+                data_standardized[col] = 0.6745 * (data_standardized[col] - median) / mad
+
+                #存储训练集的上下3倍MAD
+                med_dict[col] = median
+                mad_dict[col] = mad
+
+        return data_standardized, med_dict, mad_dict
+    else:
+        for col in data_standardized.columns:
+            if col not in ['code', 'date']:
+                # 按列使用训练集的中位数和MAD进行R.Z.score转换
+                data_standardized[col] = 0.6745 * (data_standardized[col] - MEDIANS[col]) / MADS[col]
+
+        return data_standardized
 
 
 def mutual_info_selection(data: pd.DataFrame, target: pd.Series=None, selector=None, feature_num: int=10):
